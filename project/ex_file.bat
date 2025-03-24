@@ -1,0 +1,3 @@
+@echo off
+echo Attempting to run as administrator...
+runas /user:Administrator "cmd.exe /c start"
