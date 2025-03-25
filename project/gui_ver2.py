@@ -64,7 +64,9 @@ class MalwareAnalysisApp(QWidget):
         self.setLayout(self.layout)
 
         # 프로그램 실행 경로에서 YARA 룰 폴더 경로 설정
-        self.yara_rules_folder = os.path.join(os.path.dirname(sys.argv[0]), "yara_rules")
+        # exe 파일과 같은 폴더 내에 있는 'yar_folder'를 설정
+        self.yara_rules_folder = os.path.join(os.path.dirname(sys.argv[0]), "yar_folder")
+        print(f"YARA 룰 폴더 경로: {self.yara_rules_folder}")  # 경로 출력으로 확인
         
     def calculate_hash(self, file_path):
         sha256_hash = hashlib.sha256()
