@@ -1,172 +1,185 @@
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QPushButton, QFileDialog,
+    QTextEdit, QLabel, QStackedWidget, QHBoxLayout
+)
+import sys
 import pefile
 import hashlib
 import yara
+import zipfile
 import os
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
 
-# ==============================
-# 1. 파일 해시 계산 함수
-# ==============================
-def calculate_hash(file_path):
-    """파일의 SHA-256 해시값을 계산합니다."""
-    sha256_hash = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for byte_block in iter(lambda: f.read(4096), b""):
-            sha256_hash.update(byte_block)
-    return sha256_hash.hexdigest()
+class MalwareAnalysisApp(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("정적 분석 도구")
+        self.setGeometry(100, 100, 900, 600)
+        
+        self.layout = QVBoxLayout()
+        
+        # 스택 위젯: 초기 화면 / 분석 결과 화면 전환
+        self.stack = QStackedWidget()
+        
+        # 첫 화면: 분석 시작 버튼만
+        self.start_screen = QWidget()
+        start_layout = QVBoxLayout()
+        self.start_button = QPushButton("분석 시작")
+        self.start_button.clicked.connect(self.run_analysis)
+        start_layout.addWidget(self.start_button)
+        self.start_screen.setLayout(start_layout)
+        
+        # 분석 결과 화면
+        self.result_screen = QWidget()
+        result_layout = QVBoxLayout()
+        
+        # 결과 창을 2x2 레이아웃으로 배치
+        grid_layout = QHBoxLayout()
+        self.pe_zip_analysis_text = QTextEdit()
+        self.pe_zip_analysis_text.setReadOnly(True)
+        self.basic_info_text = QTextEdit()
+        self.basic_info_text.setReadOnly(True)
+        self.yara_analysis_text = QTextEdit()
+        self.yara_analysis_text.setReadOnly(True)
+        
+        grid_layout.addWidget(QLabel("기본 정보"))
+        grid_layout.addWidget(self.basic_info_text)
+        grid_layout.addWidget(QLabel("PE & Zip 분석"))
+        grid_layout.addWidget(self.pe_zip_analysis_text)
+        grid_layout.addWidget(QLabel("YARA 분석"))
+        grid_layout.addWidget(self.yara_analysis_text)
+        
+        result_layout.addLayout(grid_layout)
+        
+        # 분석 다시 하기 버튼 추가
+        self.retry_button = QPushButton("분석 다시 하기")
+        self.retry_button.clicked.connect(self.reset_to_start)
+        result_layout.addWidget(self.retry_button)
+        
+        self.result_screen.setLayout(result_layout)
+        
+        self.stack.addWidget(self.start_screen)
+        self.stack.addWidget(self.result_screen)
+        
+        self.layout.addWidget(self.stack)
+        self.setLayout(self.layout)
 
-# ==============================
-# 2. PE 파일 분석 함수
-# ==============================
-def analyze_pe(file_path):
-    """PE 파일의 헤더와 섹션을 분석합니다."""
-    try:
-        pe = pefile.PE(file_path)
-        result = f"\n[+] 분석 중: {file_path}\n"
+        # 프로그램 실행 경로에서 YARA 룰 폴더 경로 설정
+        self.yara_rules_folder = os.path.join(os.path.dirname(sys.argv[0]), "yara_rules")
         
-        # DOS 헤더와 PE 헤더 정보
-        result += f"  DOS Header Magic: {hex(pe.DOS_HEADER.e_magic)}\n"
-        result += f"  PE Header Signature: {hex(pe.NT_HEADERS.Signature)}\n"
-        
-        # 섹션 정보 출력
-        result += "\n[+] 섹션 정보:\n"
-        for section in pe.sections:
-            result += f"  Section Name: {section.Name.decode().strip()}, Size: {section.SizeOfRawData}\n"
-        
-        # 임포트 테이블 정보
-        result += "\n[+] 임포트된 함수들:\n"
-        for entry in pe.DIRECTORY_ENTRY_IMPORT:
-            result += f"  Library: {entry.dll.decode()}\n"
-            for imp in entry.imports:
-                result += f"    {imp.name.decode() if imp.name else 'Unknown'}\n"
-                
-        return result
-    except Exception as e:
-        return f"[!] PE 파일 분석 중 오류 발생: {e}"
-
-# ==============================
-# 3. YARA 룰 매칭 함수
-# ==============================
-def scan_with_yara(file_path, yara_rules_folder):
-    """폴더 내의 모든 YARA 룰을 사용하여 파일을 분석합니다."""
-    try:
-        # 룰 폴더가 올바른지 확인
-        if not os.path.isdir(yara_rules_folder):
-            raise ValueError(f"YARA 룰 폴더가 잘못되었습니다: {yara_rules_folder}")
-        
-        # 룰 파일 목록 가져오기
-        rule_files = [os.path.join(yara_rules_folder, f) for f in os.listdir(yara_rules_folder) if f.endswith('.yar') or f.endswith('.yara')]
-        
-        if not rule_files:
-            raise ValueError("YARA 룰 파일이 폴더에 없습니다.")
-        
-        # 여러 룰 파일을 컴파일
-        rules = yara.compile(filepaths={f: f for f in rule_files})
-        
-        # 룰 매칭
-        matches = rules.match(file_path)
-        if matches:
-            result = "\n[+] YARA 룰 매칭 결과:\n"
-            for match in matches:
-                result += f"  룰: {match.rule}\n"
+    def calculate_hash(self, file_path):
+        sha256_hash = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    
+    def analyze_pe(self, file_path):
+        try:
+            pe = pefile.PE(file_path)
+            result = "[PE 분석 결과]\n"
+            result += f"DOS Header Magic: {hex(pe.DOS_HEADER.e_magic)}\n"
+            result += f"PE Header Signature: {hex(pe.NT_HEADERS.Signature)}\n\n"
+            result += "[섹션 정보]\n"
+            for section in pe.sections:
+                result += f"  {section.Name.decode().strip()} | 크기: {section.SizeOfRawData}\n"
             return result
-        else:
-            return "[+] YARA 룰에서 매칭된 결과 없음."
-    except Exception as e:
-        return f"[!] YARA 룰 매칭 중 오류 발생: {e}"
-
-# ==============================
-# 4. 문자열 추출 함수
-# ==============================
-def extract_strings(file_path):
-    """파일에서 문자열을 추출하고, 의심스러운 문자열을 찾습니다."""
-    with open(file_path, "rb") as f:
-        file_data = f.read()
-        # 4바이트 이상의 문자열 추출
-        strings = [s.decode(errors="ignore") for s in file_data.split(b'\x00') if len(s) > 3]
-        result = "\n[+] 추출된 문자열 (상위 10개):\n"
-        for s in strings[:10]:
-            result += f"  {s}\n"
+        except Exception as e:
+            return f"[!] PE 파일 분석 오류: {e}"
+    
+    # ZIP 기반 파일 분석 결과
+    def analyze_zip_based_file(self, file_path):
+        result = "[ZIP 기반 파일 분석 결과]\n"
+        try:
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                file_list = zip_ref.namelist()
+                result += f"내부 파일 개수: {len(file_list)}\n"
+                result += "[내부 파일 목록]\n"
+                for f in file_list[:5]:
+                    result += f"  - {f}\n"
+                if "xl/vbaProject.bin" in file_list:
+                    result += "\n🚨 VBA 매크로 포함됨!\n"
+                else:
+                    result += "\n✔ VBA 매크로 없음\n"
+        except Exception as e:
+            result += f"[!] ZIP 분석 오류: {e}"
         return result
-
-# ==============================
-# 5. 파일 선택 및 분석 시작 함수
-# ==============================
-def select_file():
-    """사용자가 파일을 선택할 수 있도록 파일 탐색기를 띄웁니다."""
-    file_path = filedialog.askopenfilename(title="분석할 파일 선택", filetypes=(("Executable Files", "*.exe"), ("All Files", "*.*")))
-    return file_path
-
-def select_yara_folder():
-    """사용자가 YARA 룰 폴더를 선택할 수 있도록 폴더 탐색기를 띄웁니다."""
-    folder_path = filedialog.askdirectory(title="YARA 룰 폴더 선택")
-    return folder_path
-
-def run_analysis():
-    """GUI에서 분석을 실행합니다."""
-    file_path = select_file()
-    if not file_path:
-        messagebox.showerror("오류", "파일을 선택하지 않았습니다.")
-        return
     
-    yara_rules_folder = select_yara_folder()
-    if not yara_rules_folder:
-        messagebox.showerror("오류", "YARA 룰 폴더를 선택하지 않았습니다.")
-        return
+    # YARA 룰로 EXE 파일 탐지
+    def scan_with_yara(self, file_path):
+        try:
+            if not os.path.isdir(self.yara_rules_folder):
+                return "[!] YARA 룰 폴더 오류"
+            
+            rule_files = [os.path.join(self.yara_rules_folder, f) for f in os.listdir(self.yara_rules_folder) if f.endswith('.yar') or f.endswith('.yara')]
+            if not rule_files:
+                return "YARA 룰 파일 없음."
+            
+            rules = yara.compile(filepaths={f: f for f in rule_files})
+            result = "[YARA 탐지 결과]\n"
+            matches = rules.match(file_path)
+            if matches:
+                for match in matches:
+                    result += f"  - {match.rule}\n"
+            else:
+                result += "✔ 탐지 결과 없음\n"
+            return result
+        except Exception as e:
+            return f"[!] YARA 분석 오류: {e}"
 
-    # 로딩 상태 표시
-    start_button.config(state=tk.DISABLED)
-    text_output.delete(1.0, tk.END)  # 이전 결과를 지우고
-    text_output.insert(tk.END, "분석 중...\n")
+    # YARA 룰로 EXE 파일을 검사하는 함수
+    def scan_exe_with_yara(self, file_path):
+        return self.scan_with_yara(file_path)
 
-    # 1. 파일 해시 계산
-    file_hash = calculate_hash(file_path)
-    result = f"\n[+] 파일 해시 (SHA-256): {file_hash}\n"
+    # Xlsm 파일에서 VBA 매크로 파일을 추출하여 YARA 룰로 검사
+    def scan_xlsm_with_yara(self, file_path):
+        try:
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                if "xl/vbaProject.bin" in zip_ref.namelist():
+                    # 'xl/vbaProject.bin'을 추출하여 YARA 룰로 검사
+                    with zip_ref.open("xl/vbaProject.bin") as vba_file:
+                        vba_file_path = "vbaProject.bin"  # 임시 저장 경로
+                        with open(vba_file_path, 'wb') as temp_file:
+                            temp_file.write(vba_file.read())
+
+                        # YARA 룰 적용
+                        result = self.scan_with_yara(vba_file_path)
+                        
+                        # 임시 파일 삭제
+                        os.remove(vba_file_path)
+                        return result
+                else:
+                    return "✔ 매크로 없음"
+        except Exception as e:
+            return f"[!] YARA 분석 오류: {e}"
+
+    # 파일 분석 실행 함수
+    def run_analysis(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "파일 선택", "", "모든 파일 (*.*)")
+        if not file_path:
+            return
+        
+        self.basic_info_text.clear()
+        self.pe_zip_analysis_text.clear()
+        self.yara_analysis_text.clear()
+        
+        self.basic_info_text.setText(f"파일 경로: {file_path}\nSHA-256 해시: {self.calculate_hash(file_path)}\n")
+        
+        # 파일 확장자에 따라 PE 파일 또는 ZIP 파일 분석
+        if file_path.endswith(".exe"):
+            self.pe_zip_analysis_text.setText(self.analyze_pe(file_path))
+            self.yara_analysis_text.setText(self.scan_exe_with_yara(file_path))
+        elif file_path.endswith((".xlsm", ".docx", ".pptx", ".zip")):
+            self.pe_zip_analysis_text.setText(self.analyze_zip_based_file(file_path))
+            self.yara_analysis_text.setText(self.scan_xlsm_with_yara(file_path))
+        
+        self.stack.setCurrentWidget(self.result_screen)
     
-    # 2. PE 파일 분석
-    result += analyze_pe(file_path)
-    
-    # 3. YARA 룰 매칭
-    result += scan_with_yara(file_path, yara_rules_folder)
-    
-    # 4. 문자열 추출
-    result += extract_strings(file_path)
-    
-    # 결과 출력
-    text_output.delete(1.0, tk.END)  # 이전 결과를 지우고
-    text_output.insert(tk.END, result)  # 새로운 결과를 출력
+    # 분석 다시 하기 함수
+    def reset_to_start(self):
+        self.stack.setCurrentWidget(self.start_screen)
 
-    # 분석 완료 후 버튼 활성화
-    start_button.config(state=tk.NORMAL)
-
-# ==============================
-# 6. GUI 설정
-# ==============================
-root = tk.Tk()
-root.title("정적 분석 도구")
-root.geometry("800x600")  # 창 크기 설정
-root.config(bg="#f0f0f0")
-
-# 스타일 설정 (ttk)
-style = ttk.Style()
-style.configure("TButton", font=("Arial", 12), padding=10, relief="flat", background="#4CAF50", foreground="white")
-style.configure("TText", font=("Courier New", 10), relief="sunken", height=15, width=95)
-
-# GUI 레이아웃 설정
-frame = tk.Frame(root, bg="#f0f0f0")
-frame.pack(pady=20)
-
-start_button = ttk.Button(frame, text="분석 시작", command=run_analysis)
-start_button.pack()
-
-text_output = tk.Text(root, wrap=tk.WORD, height=20, width=100)
-text_output.pack(pady=10, padx=20)
-
-# 스크롤바 추가
-scrollbar = tk.Scrollbar(root, command=text_output.yview)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-text_output.config(yscrollcommand=scrollbar.set)
-
-# 실행
-root.mainloop()
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MalwareAnalysisApp()
+    window.show()
+    sys.exit(app.exec())
