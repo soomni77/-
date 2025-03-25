@@ -10,7 +10,7 @@ class MalwareScanner(QWidget):
         super().__init__()
 
         self.initUI()
-        self.yara_rules = self.load_yara_rules('project/yar_folder')  # 룰 폴더 경로 (여러 .yar 파일이 들어있는 폴더)
+        self.yara_rules = self.load_yara_rules('악성코드/project/yar_folder')  # 룰 폴더 경로 (여러 .yar 파일이 들어있는 폴더)
 
     def initUI(self):
         self.setWindowTitle('악성코드 탐지 프로그램')
@@ -79,6 +79,7 @@ class MalwareScanner(QWidget):
                     result_text = "🔴 악성코드 탐지됨!\n"
                     for match in matches:
                         result_text += f"룰: {match.rule}\n"
+                        print(f"탐지된 룰: {match.rule}")  # 매칭된 룰 로그 출력
                     self.result_text.setText(result_text)
                 else:
                     self.result_text.setText("✅ 안전한 파일입니다.")
